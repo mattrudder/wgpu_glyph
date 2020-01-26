@@ -6,6 +6,7 @@ use cache::Cache;
 use glyph_brush::rusttype::{point, Rect};
 use std::marker::PhantomData;
 use std::mem;
+use zerocopy::{AsBytes, FromBytes};
 
 pub struct Pipeline<Depth> {
     transform: wgpu::Buffer,
@@ -75,9 +76,7 @@ impl Pipeline<wgpu::DepthStencilStateDescriptor> {
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         target: &wgpu::TextureView,
-        depth_stencil_attachment: wgpu::RenderPassDepthStencilAttachmentDescriptor<
-            &wgpu::TextureView,
-        >,
+        depth_stencil_attachment: wgpu::RenderPassDepthStencilAttachmentDescriptor,
         transform: [f32; 16],
         region: Option<Region>,
     ) {
@@ -105,12 +104,7 @@ impl<Depth> Pipeline<Depth> {
         self.cache.update(device, encoder, offset, size, data);
     }
 
-    pub fn increase_cache_size(
-        &mut self,
-        device: &wgpu::Device,
-        width: u32,
-        height: u32,
-    ) {
+    pub fn increase_cache_size(&mut self, device: &wgpu::Device, width: u32, height: u32) {
         self.cache = Cache::new(device, width, height);
 
         self.uniforms = create_uniforms(
@@ -135,17 +129,15 @@ impl<Depth> Pipeline<Depth> {
 
         if instances.len() > self.supported_instances {
             self.instances = device.create_buffer(&wgpu::BufferDescriptor {
-                size: mem::size_of::<Instance>() as u64
-                    * instances.len() as u64,
+                size: mem::size_of::<Instance>() as u64 * instances.len() as u64,
                 usage: wgpu::BufferUsage::VERTEX | wgpu::BufferUsage::COPY_DST,
             });
 
             self.supported_instances = instances.len();
         }
 
-        let instance_buffer = device
-            .create_buffer_mapped(instances.len(), wgpu::BufferUsage::COPY_SRC)
-            .fill_from_slice(instances);
+        let instance_buffer =
+            device.create_buffer_with_data(instances.as_bytes(), wgpu::BufferUsage::COPY_SRC);
 
         encoder.copy_buffer_to_buffer(
             &instance_buffer,
@@ -176,12 +168,10 @@ fn build<D>(
     cache_width: u32,
     cache_height: u32,
 ) -> Pipeline<D> {
-    let transform = device
-        .create_buffer_mapped(
-            16,
-            wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
-        )
-        .fill_from_slice(&IDENTITY_MATRIX);
+    let transform = device.create_buffer_with_data(
+        IDENTITY_MATRIX.as_bytes(),
+        wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
+    );
 
     let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
         address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -197,58 +187,47 @@ fn build<D>(
 
     let cache = Cache::new(device, cache_width, cache_height);
 
-    let uniform_layout =
-        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            bindings: &[
-                wgpu::BindGroupLayoutBinding {
-                    binding: 0,
-                    visibility: wgpu::ShaderStage::VERTEX,
-                    ty: wgpu::BindingType::UniformBuffer { dynamic: false },
+    let uniform_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        bindings: &[
+            wgpu::BindGroupLayoutBinding {
+                binding: 0,
+                visibility: wgpu::ShaderStage::VERTEX,
+                ty: wgpu::BindingType::UniformBuffer { dynamic: false },
+            },
+            wgpu::BindGroupLayoutBinding {
+                binding: 1,
+                visibility: wgpu::ShaderStage::FRAGMENT,
+                ty: wgpu::BindingType::Sampler,
+            },
+            wgpu::BindGroupLayoutBinding {
+                binding: 2,
+                visibility: wgpu::ShaderStage::FRAGMENT,
+                ty: wgpu::BindingType::SampledTexture {
+                    multisampled: false,
+                    dimension: wgpu::TextureViewDimension::D2,
                 },
-                wgpu::BindGroupLayoutBinding {
-                    binding: 1,
-                    visibility: wgpu::ShaderStage::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler,
-                },
-                wgpu::BindGroupLayoutBinding {
-                    binding: 2,
-                    visibility: wgpu::ShaderStage::FRAGMENT,
-                    ty: wgpu::BindingType::SampledTexture {
-                        multisampled: false,
-                        dimension: wgpu::TextureViewDimension::D2,
-                    },
-                },
-            ],
-        });
+            },
+        ],
+    });
 
-    let uniforms = create_uniforms(
-        device,
-        &uniform_layout,
-        &transform,
-        &sampler,
-        &cache.view,
-    );
+    let uniforms = create_uniforms(device, &uniform_layout, &transform, &sampler, &cache.view);
 
     let instances = device.create_buffer(&wgpu::BufferDescriptor {
-        size: mem::size_of::<Instance>() as u64
-            * Instance::INITIAL_AMOUNT as u64,
+        size: mem::size_of::<Instance>() as u64 * Instance::INITIAL_AMOUNT as u64,
         usage: wgpu::BufferUsage::VERTEX | wgpu::BufferUsage::COPY_DST,
     });
 
-    let layout =
-        device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            bind_group_layouts: &[&uniform_layout],
-        });
+    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        bind_group_layouts: &[&uniform_layout],
+    });
 
     let vs = include_bytes!("shader/vertex.spv");
-    let vs_module = device.create_shader_module(
-        &wgpu::read_spirv(std::io::Cursor::new(&vs[..])).unwrap(),
-    );
+    let vs_module =
+        device.create_shader_module(&wgpu::read_spirv(std::io::Cursor::new(&vs[..])).unwrap());
 
     let fs = include_bytes!("shader/fragment.spv");
-    let fs_module = device.create_shader_module(
-        &wgpu::read_spirv(std::io::Cursor::new(&fs[..])).unwrap(),
-    );
+    let fs_module =
+        device.create_shader_module(&wgpu::read_spirv(std::io::Cursor::new(&fs[..])).unwrap());
 
     let raw = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         layout: &layout,
@@ -340,56 +319,41 @@ fn draw<D>(
     device: &wgpu::Device,
     encoder: &mut wgpu::CommandEncoder,
     target: &wgpu::TextureView,
-    depth_stencil_attachment: Option<
-        wgpu::RenderPassDepthStencilAttachmentDescriptor<&wgpu::TextureView>,
-    >,
+    depth_stencil_attachment: Option<wgpu::RenderPassDepthStencilAttachmentDescriptor>,
     transform: [f32; 16],
     region: Option<Region>,
 ) {
     if transform != pipeline.current_transform {
-        let transform_buffer = device
-            .create_buffer_mapped(16, wgpu::BufferUsage::COPY_SRC)
-            .fill_from_slice(&transform[..]);
+        let transform_buffer =
+            device.create_buffer_with_data(&transform[..].as_bytes(), wgpu::BufferUsage::COPY_SRC);
 
-        encoder.copy_buffer_to_buffer(
-            &transform_buffer,
-            0,
-            &pipeline.transform,
-            0,
-            16 * 4,
-        );
+        encoder.copy_buffer_to_buffer(&transform_buffer, 0, &pipeline.transform, 0, 16 * 4);
 
         pipeline.current_transform = transform;
     }
 
-    let mut render_pass =
-        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
-                attachment: target,
-                resolve_target: None,
-                load_op: wgpu::LoadOp::Load,
-                store_op: wgpu::StoreOp::Store,
-                clear_color: wgpu::Color {
-                    r: 0.0,
-                    g: 0.0,
-                    b: 0.0,
-                    a: 0.0,
-                },
-            }],
-            depth_stencil_attachment,
-        });
+    let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
+            attachment: target,
+            resolve_target: None,
+            load_op: wgpu::LoadOp::Load,
+            store_op: wgpu::StoreOp::Store,
+            clear_color: wgpu::Color {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+                a: 0.0,
+            },
+        }],
+        depth_stencil_attachment,
+    });
 
     render_pass.set_pipeline(&pipeline.raw);
     render_pass.set_bind_group(0, &pipeline.uniforms, &[]);
     render_pass.set_vertex_buffers(0, &[(&pipeline.instances, 0)]);
 
     if let Some(region) = region {
-        render_pass.set_scissor_rect(
-            region.x,
-            region.y,
-            region.width,
-            region.height,
-        );
+        render_pass.set_scissor_rect(region.x, region.y, region.width, region.height);
     }
 
     render_pass.draw(0..4, 0..pipeline.current_instances as u32);
@@ -424,7 +388,8 @@ fn create_uniforms(
     })
 }
 
-#[derive(Debug, Clone, Copy)]
+#[repr(C)]
+#[derive(Debug, Clone, Copy, AsBytes, FromBytes)]
 pub struct Instance {
     left_top: [f32; 3],
     right_bottom: [f32; 2],
@@ -459,29 +424,27 @@ impl From<glyph_brush::GlyphVertex> for Instance {
         if gl_rect.max.x > gl_bounds.max.x {
             let old_width = gl_rect.width();
             gl_rect.max.x = gl_bounds.max.x;
-            tex_coords.max.x = tex_coords.min.x
-                + tex_coords.width() * gl_rect.width() / old_width;
+            tex_coords.max.x = tex_coords.min.x + tex_coords.width() * gl_rect.width() / old_width;
         }
 
         if gl_rect.min.x < gl_bounds.min.x {
             let old_width = gl_rect.width();
             gl_rect.min.x = gl_bounds.min.x;
-            tex_coords.min.x = tex_coords.max.x
-                - tex_coords.width() * gl_rect.width() / old_width;
+            tex_coords.min.x = tex_coords.max.x - tex_coords.width() * gl_rect.width() / old_width;
         }
 
         if gl_rect.max.y > gl_bounds.max.y {
             let old_height = gl_rect.height();
             gl_rect.max.y = gl_bounds.max.y;
-            tex_coords.max.y = tex_coords.min.y
-                + tex_coords.height() * gl_rect.height() / old_height;
+            tex_coords.max.y =
+                tex_coords.min.y + tex_coords.height() * gl_rect.height() / old_height;
         }
 
         if gl_rect.min.y < gl_bounds.min.y {
             let old_height = gl_rect.height();
             gl_rect.min.y = gl_bounds.min.y;
-            tex_coords.min.y = tex_coords.max.y
-                - tex_coords.height() * gl_rect.height() / old_height;
+            tex_coords.min.y =
+                tex_coords.max.y - tex_coords.height() * gl_rect.height() / old_height;
         }
 
         Instance {

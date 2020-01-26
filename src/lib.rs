@@ -14,10 +14,9 @@ use pipeline::{Instance, Pipeline};
 pub use builder::GlyphBrushBuilder;
 pub use glyph_brush::{
     rusttype::{self, Font, Point, PositionedGlyph, Rect, Scale, SharedBytes},
-    BuiltInLineBreaker, FontId, FontMap, GlyphCruncher, GlyphPositioner,
-    HorizontalAlign, Layout, LineBreak, LineBreaker, OwnedSectionText,
-    OwnedVariedSection, PositionedGlyphIter, Section, SectionGeometry,
-    SectionText, VariedSection, VerticalAlign,
+    BuiltInLineBreaker, FontId, FontMap, GlyphCruncher, GlyphPositioner, HorizontalAlign, Layout,
+    LineBreak, LineBreaker, OwnedSectionText, OwnedVariedSection, PositionedGlyphIter, Section,
+    SectionGeometry, SectionText, VariedSection, VerticalAlign,
 };
 
 use core::hash::BuildHasher;
@@ -59,11 +58,8 @@ impl<'font, Depth, H: BuildHasher> GlyphBrush<'font, Depth, H> {
     ///
     /// Benefits from caching, see [caching behaviour](#caching-behaviour).
     #[inline]
-    pub fn queue_custom_layout<'a, S, G>(
-        &mut self,
-        section: S,
-        custom_layout: &G,
-    ) where
+    pub fn queue_custom_layout<'a, S, G>(&mut self, section: S, custom_layout: &G)
+    where
         G: GlyphPositioner,
         S: Into<Cow<'a, VariedSection<'a>>>,
     {
@@ -89,11 +85,8 @@ impl<'font, Depth, H: BuildHasher> GlyphBrush<'font, Depth, H> {
     /// Should not be necessary unless using multiple draws per frame with
     /// distinct transforms, see [caching behaviour](#caching-behaviour).
     #[inline]
-    pub fn keep_cached_custom_layout<'a, S, G>(
-        &mut self,
-        section: S,
-        custom_layout: &G,
-    ) where
+    pub fn keep_cached_custom_layout<'a, S, G>(&mut self, section: S, custom_layout: &G)
+    where
         S: Into<Cow<'a, VariedSection<'a>>>,
         G: GlyphPositioner,
     {
@@ -114,11 +107,7 @@ impl<'font, Depth, H: BuildHasher> GlyphBrush<'font, Depth, H> {
         self.glyph_brush.keep_cached(section)
     }
 
-    fn process_queued(
-        &mut self,
-        device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-    ) {
+    fn process_queued(&mut self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder) {
         let pipeline = &mut self.pipeline;
 
         let mut brush_action;
@@ -129,8 +118,7 @@ impl<'font, Depth, H: BuildHasher> GlyphBrush<'font, Depth, H> {
                     let offset = [rect.min.x as u16, rect.min.y as u16];
                     let size = [rect.width() as u16, rect.height() as u16];
 
-                    pipeline
-                        .update_cache(device, encoder, offset, size, tex_data);
+                    pipeline.update_cache(device, encoder, offset, size, tex_data);
                 },
                 Instance::from,
             );
@@ -142,13 +130,10 @@ impl<'font, Depth, H: BuildHasher> GlyphBrush<'font, Depth, H> {
                     // This is currently not possible I think. Ask!
                     let max_image_dimension = 2048;
 
-                    let (new_width, new_height) = if (suggested.0
-                        > max_image_dimension
+                    let (new_width, new_height) = if (suggested.0 > max_image_dimension
                         || suggested.1 > max_image_dimension)
-                        && (self.glyph_brush.texture_dimensions().0
-                            < max_image_dimension
-                            || self.glyph_brush.texture_dimensions().1
-                                < max_image_dimension)
+                        && (self.glyph_brush.texture_dimensions().0 < max_image_dimension
+                            || self.glyph_brush.texture_dimensions().1 < max_image_dimension)
                     {
                         (max_image_dimension, max_image_dimension)
                     } else {
@@ -190,10 +175,7 @@ impl<'font, Depth, H: BuildHasher> GlyphBrush<'font, Depth, H> {
     /// Adds an additional font to the one(s) initially added on build.
     ///
     /// Returns a new [`FontId`](struct.FontId.html) to reference this font.
-    pub fn add_font_bytes<'a: 'font, B: Into<SharedBytes<'a>>>(
-        &mut self,
-        font_data: B,
-    ) -> FontId {
+    pub fn add_font_bytes<'a: 'font, B: Into<SharedBytes<'a>>>(&mut self, font_data: B) -> FontId {
         self.glyph_brush.add_font_bytes(font_data)
     }
 
@@ -306,9 +288,7 @@ impl<'font, H: BuildHasher> GlyphBrush<'font, (), H> {
     }
 }
 
-impl<'font, H: BuildHasher>
-    GlyphBrush<'font, wgpu::DepthStencilStateDescriptor, H>
-{
+impl<'font, H: BuildHasher> GlyphBrush<'font, wgpu::DepthStencilStateDescriptor, H> {
     fn new(
         device: &wgpu::Device,
         filter_mode: wgpu::FilterMode,
@@ -347,9 +327,7 @@ impl<'font, H: BuildHasher>
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         target: &wgpu::TextureView,
-        depth_stencil_attachment: wgpu::RenderPassDepthStencilAttachmentDescriptor<
-            &wgpu::TextureView,
-        >,
+        depth_stencil_attachment: wgpu::RenderPassDepthStencilAttachmentDescriptor,
         target_width: u32,
         target_height: u32,
     ) -> Result<(), String> {
@@ -379,9 +357,7 @@ impl<'font, H: BuildHasher>
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         target: &wgpu::TextureView,
-        depth_stencil_attachment: wgpu::RenderPassDepthStencilAttachmentDescriptor<
-            &wgpu::TextureView,
-        >,
+        depth_stencil_attachment: wgpu::RenderPassDepthStencilAttachmentDescriptor,
         transform: [f32; 16],
     ) -> Result<(), String> {
         self.process_queued(device, encoder);
@@ -414,9 +390,7 @@ impl<'font, H: BuildHasher>
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         target: &wgpu::TextureView,
-        depth_stencil_attachment: wgpu::RenderPassDepthStencilAttachmentDescriptor<
-            &wgpu::TextureView,
-        >,
+        depth_stencil_attachment: wgpu::RenderPassDepthStencilAttachmentDescriptor,
         transform: [f32; 16],
         region: Region,
     ) -> Result<(), String> {
@@ -446,9 +420,7 @@ fn orthographic_projection(width: u32, height: u32) -> [f32; 16] {
     ]
 }
 
-impl<'font, D, H: BuildHasher> GlyphCruncher<'font>
-    for GlyphBrush<'font, D, H>
-{
+impl<'font, D, H: BuildHasher> GlyphCruncher<'font> for GlyphBrush<'font, D, H> {
     #[inline]
     fn pixel_bounds_custom_layout<'a, S, L>(
         &mut self,
